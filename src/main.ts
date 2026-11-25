@@ -1,5 +1,7 @@
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { createDocsSiteRouter } from './app/drivers/docs/docs-site.router';
 import { AppModule } from './app/modules/app.module';
 
 async function bootstrap() {
@@ -11,6 +13,7 @@ async function bootstrap() {
         ? ['error', 'warn']
         : ['error', 'warn', 'log', 'debug', 'verbose'],
   });
+  const configService = app.get(ConfigService);
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Price API')
@@ -29,12 +32,63 @@ async function bootstrap() {
 
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
 
-  SwaggerModule.setup('docs', app, swaggerDocument, {
-    swaggerOptions: {
-      persistAuthorization: true,
+  // Swagger vivia en /docs; esa ruta ahora es del sitio de documentacion.
+  SwaggerModule.setup(
+    readOptionalConfig(configService, 'SWAGGER_PATH') ?? '/api/docs',
+    app,
+    swaggerDocument,
+    {
+      swaggerOptions: {
+        persistAuthorization: true,
+      },
     },
-  });
+  );
+
+  if (readBooleanConfig(configService, 'DOCS_SITE_ENABLED', true)) {
+    const docsPath =
+      readOptionalConfig(configService, 'DOCS_SITE_PATH') ?? '/docs';
+    const username = readOptionalConfig(configService, 'DOCS_SITE_USER');
+    const password = readOptionalConfig(configService, 'DOCS_SITE_PASSWORD');
+
+    // Con los dos definidos pide credenciales y publica todas las paginas; sin
+    // ellos queda abierto y no publica la de operacion. El markdown se lee del
+    // repositorio desde el que corre el proceso.
+    app.use(
+      docsPath,
+      createDocsSiteRouter({
+        basePath: docsPath,
+        rootDirectory: process.cwd(),
+        credentials:
+          username !== undefined && password !== undefined
+            ? { username, password }
+            : undefined,
+      }),
+    );
+  }
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+void bootstrap();
+
+function readOptionalConfig(
+  configService: ConfigService,
+  name: string,
+): string | undefined {
+  const value = configService.get<string>(name);
+  if (value === undefined || value.trim() === '') {
+    return undefined;
+  }
+  return value.trim();
+}
+
+function readBooleanConfig(
+  configService: ConfigService,
+  name: string,
+  defaultValue: boolean,
+): boolean {
+  const rawValue = readOptionalConfig(configService, name);
+  if (rawValue === undefined) {
+    return defaultValue;
+  }
+  return ['1', 'true', 'yes', 'y'].includes(rawValue.toLowerCase());
+}
